@@ -366,7 +366,6 @@ with col_a:
         zerolinecolor="#2a3a5c", secondary_y=True
     )
     fig2.update_xaxes(gridcolor="#1e2640", zerolinecolor="#2a3a5c")
-    )
     st.plotly_chart(fig2, use_container_width=True)
 
 # REGRESIÓN LOGARÍTMICA
