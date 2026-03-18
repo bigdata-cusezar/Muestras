@@ -344,11 +344,28 @@ with col_a:
                       dash="solid" if nombre == "Distribución Real" else "dot"),
         ), secondary_y=True)
 
-    fig2.update_layout(**PLOTLY_LAYOUT, height=380,
+    fig2.update_layout(
+        paper_bgcolor="#161b27",
+        plot_bgcolor="#161b27",
+        font=dict(family="DM Sans", color="#e8eaf0", size=12),
+        margin=dict(t=50, b=80, l=50, r=20),
+        height=380,
         xaxis_title="x relativo (kg/cm²)",
-        yaxis_title="Frecuencia",
-        yaxis2_title="Densidad",
-        legend=dict(orientation="h", y=-0.25, font=dict(size=10))
+        legend=dict(
+            orientation="h", y=-0.35, font=dict(size=10),
+            bgcolor="rgba(26,32,53,0.9)",
+            bordercolor="#2a3a5c", borderwidth=1
+        )
+    )
+    fig2.update_yaxes(
+        title_text="Frecuencia", gridcolor="#1e2640",
+        zerolinecolor="#2a3a5c", secondary_y=False
+    )
+    fig2.update_yaxes(
+        title_text="Densidad", gridcolor="#1e2640",
+        zerolinecolor="#2a3a5c", secondary_y=True
+    )
+    fig2.update_xaxes(gridcolor="#1e2640", zerolinecolor="#2a3a5c")
     )
     st.plotly_chart(fig2, use_container_width=True)
 
