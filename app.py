@@ -402,11 +402,33 @@ for edad in [14, 28, 56]:
 
 prom_general = df[df["Edad Estandar"] == 28].groupby(cil_col)[res_col].mean().mean()
 
-# Líneas de referencia (en índices posicionales)
-fig1.add_hline(y=fc_nominal, line_dash="dot", line_color=HLINE_C,
-               annotation_text=f"f'c: {fc_nominal:.0f}", annotation_font_color=HLINE_C)
-fig1.add_hline(y=prom_general, line_dash="dot", line_color=HLINE2_C,
-               annotation_text=f"Prom. General: {prom_general:.2f}", annotation_font_color=HLINE2_C)
+# Líneas de referencia con posicionamiento dinámico para evitar solapamiento
+# Si las dos líneas están muy cerca (< 8% del rango visible), una va arriba y otra abajo
+_y_min = df[df["Edad Estandar"] == 28][res_col].min() * 0.85
+_y_max = df[df["Edad Estandar"] == 28][res_col].max() * 1.10
+_rango = _y_max - _y_min if _y_max > _y_min else 1
+_cerca = abs(fc_nominal - prom_general) / _rango < 0.08
+
+# fc_nominal: etiqueta siempre arriba si es mayor, abajo si es menor que prom_general
+_fc_pos    = "top" if fc_nominal >= prom_general else "bottom"
+_prom_pos  = "bottom" if fc_nominal >= prom_general else "top"
+# Si están muy cerca forzar lados opuestos
+if _cerca:
+    _fc_pos   = "top"
+    _prom_pos = "bottom"
+
+fig1.add_hline(
+    y=fc_nominal, line_dash="dot", line_color=HLINE_C,
+    annotation_text=f"f'c: {fc_nominal:.0f}",
+    annotation_font_color=HLINE_C,
+    annotation_position=f"right {_fc_pos}",
+)
+fig1.add_hline(
+    y=prom_general, line_dash="dot", line_color=HLINE2_C,
+    annotation_text=f"Prom. General: {prom_general:.2f}",
+    annotation_font_color=HLINE2_C,
+    annotation_position=f"right {_prom_pos}",
+)
 
 # Intervalos inteligentes: mostrar ticks cada N segun cantidad
 n_cil = len(todos_cilindros)
