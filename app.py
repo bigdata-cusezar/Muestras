@@ -63,7 +63,8 @@ html, body, [class*="css"] {{ font-family: 'DM Sans', sans-serif; }}
     background: {BG2}; border: 1px solid {BORDER}; border-radius: 12px;
     padding: 16px 20px; text-align: center;
     transition: transform 0.2s, box-shadow 0.2s;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06); height: 100%;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    height: 130px; display: flex; flex-direction: column; justify-content: center;
 }}
 .metric-card:hover {{ transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.12); }}
 .metric-label {{
@@ -92,12 +93,19 @@ html, body, [class*="css"] {{ font-family: 'DM Sans', sans-serif; }}
     margin: 20px 0 10px 0; padding-bottom: 6px;
     border-bottom: 2px solid {BORDER};
 }}
-.upload-area {{
-    background: {BG2}; border: 2px dashed {BORDER};
-    border-radius: 16px; padding: 48px 40px; text-align: center;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.04); max-width: 600px; margin: 80px auto;
+.upload-fullscreen {{
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    background: {BG}; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; z-index: 9999;
 }}
-.upload-icon {{ font-size: 48px; margin-bottom: 16px; }}
+.upload-box {{
+    background: {BG2}; border: 2px dashed {BORDER};
+    border-radius: 20px; padding: 56px 64px; text-align: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.08); max-width: 520px; width: 90%;
+    transition: border-color 0.2s;
+}}
+.upload-box:hover {{ border-color: {ACCENT}; }}
+.upload-icon {{ font-size: 56px; margin-bottom: 20px; line-height: 1; }}
 div[data-testid="stPlotlyChart"] {{
     background: {BG2}; border-radius: 12px; border: 1px solid {BORDER};
     padding: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.04);
@@ -110,10 +118,10 @@ div[data-testid="stPlotlyChart"] {{
 COLORS = {14: "#4a90d9", 28: "#f39c12", 56: "#9b59b6"}
 CURVE_COLORS = {
     "Distribucion Real":   "#1a73e8",
-    "Aceptable (Ds=50)":   "#e74c3c",
-    "Bueno (Ds=45)":       "#e67e22",
-    "Muy Bueno (Ds=37.5)": "#f1c40f",
-    "Excelente (Ds=30)":   "#2ecc71",
+    "Aceptable":   "#e74c3c",
+    "Bueno":       "#e67e22",
+    "Muy Bueno":   "#f1c40f",
+    "Excelente":   "#2ecc71",
 }
 
 def plotly_base():
@@ -224,19 +232,23 @@ if "archivo_data" not in st.session_state:
 # Widget de carga centrado en la pantalla principal
 if st.session_state.archivo_data is None:
     st.markdown(f"""
-    <div class="upload-area">
-        <div class="upload-icon">🏗️</div>
-        <h2 style="color:{ACCENT}; margin:0 0 8px 0; font-size:22px;">Control de Resistencia</h2>
-        <p style="color:{TEXT2}; font-size:14px; margin-bottom:24px;">
-            Arrastra tu archivo aquí o haz clic para buscarlo
-        </p>
+    <div class="upload-fullscreen">
+        <div class="upload-box">
+            <div class="upload-icon">🏗️</div>
+            <h2 style="color:{ACCENT}; margin:0 0 8px 0; font-size:24px; font-weight:700;">
+                Control de Resistencia
+            </h2>
+            <p style="color:{TEXT2}; font-size:14px; margin:0 0 24px 0;">
+                Arrastra tu archivo aquí o haz clic en el botón
+            </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
     uploaded = st.file_uploader(
-        "Seleccionar archivo",
+        "📂 Buscar archivo Excel o CSV",
         type=["xlsx", "xls", "csv"],
-        label_visibility="collapsed",
+        label_visibility="visible",
         help="Excel o CSV con los datos de ensayos"
     )
     if uploaded:
@@ -388,18 +400,26 @@ fig1.add_hline(y=fc_nominal, line_dash="dot", line_color=HLINE_C,
 fig1.add_hline(y=prom_general, line_dash="dot", line_color=HLINE2_C,
                annotation_text=f"Prom. General: {prom_general:.2f}", annotation_font_color=HLINE2_C)
 
-# FIX 2: Eje X categórico — tickvals en posiciones, ticktext en etiquetas reales
+# Intervalos inteligentes: mostrar ticks cada N segun cantidad
+n_cil = len(todos_cilindros)
+if n_cil <= 40:    step = 1
+elif n_cil <= 80:  step = 2
+elif n_cil <= 160: step = 5
+else:              step = 10
+tick_vals_show = [indices_x[i] for i in range(0, n_cil, step)]
+tick_text_show = [etiquetas_x[i] for i in range(0, n_cil, step)]
+
 fig1.update_layout(**plotly_base(),
     xaxis=dict(
         title="Cilindro N",
         gridcolor=GRID, zerolinecolor=ZERO_LINE,
         tickmode="array",
-        tickvals=indices_x,
-        ticktext=etiquetas_x,
-        tickangle=-45 if len(todos_cilindros) > 30 else 0,
+        tickvals=tick_vals_show,
+        ticktext=tick_text_show,
+        tickangle=90,
     ),
     yaxis=dict(title="Promedio Resistencia (kg/cm2)", gridcolor=GRID, zerolinecolor=ZERO_LINE),
-    height=400,
+    height=420,
     hovermode="x unified",
 )
 st.plotly_chart(fig1, use_container_width=True)
@@ -424,10 +444,10 @@ with col_a:
 
     for nombre, sigma in {
         "Distribucion Real":   ds if ds > 0 else 1,
-        "Aceptable (Ds=50)":   50,
-        "Bueno (Ds=45)":       45,
-        "Muy Bueno (Ds=37.5)": 37.5,
-        "Excelente (Ds=30)":   30,
+        "Aceptable":   50,
+        "Bueno":       45,
+        "Muy Bueno":   37.5,
+        "Excelente":   30,
     }.items():
         pdf = stats.norm.pdf(x_rel, 0, sigma)
         fig2.add_trace(go.Scatter(
@@ -480,12 +500,28 @@ with col_b:
                 line=dict(color="rgba(0,0,0,0)"),
                 name="Rango +-", hoverinfo="skip",
             ))
-            eq_label = f"f(t) = {popt[0]:.2f}*ln(t) + {popt[1]:.2f}"
+            eq_label = f"f(t) = {popt[0]:.2f}·ln(t) + {popt[1]:.2f}"
             fig3.add_trace(go.Scatter(
-                x=x_curve, y=y_curve, mode="lines", name=eq_label,
+                x=x_curve, y=y_curve, mode="lines", name="Regresion log",
                 line=dict(color=HLINE_C, width=2, dash="dash"),
                 hovertemplate="t=%{x:.0f}d<br>f(t)=%{y:.1f} kg/cm2<extra></extra>",
             ))
+            # Anotar ecuacion directamente dentro del grafico
+            x_mid = float(x_curve[len(x_curve)//2])
+            y_mid = float(log_func(x_mid, *popt))
+            fig3.add_annotation(
+                x=x_mid, y=y_mid,
+                text=eq_label,
+                showarrow=False,
+                bgcolor=LEG_BG,
+                bordercolor=BORDER,
+                borderwidth=1,
+                borderpad=6,
+                font=dict(size=11, color=TEXT, family="DM Mono"),
+                xanchor="center",
+                yanchor="bottom",
+                yshift=14,
+            )
         except Exception:
             pass
 
@@ -502,7 +538,7 @@ with col_b:
     fig3.add_hline(y=fc_nominal, line_dash="dot", line_color=HLINE_C,
                    annotation_text=f"f'c = {fc_nominal:.0f}",
                    annotation_font_color=HLINE_C)
-    fig3.update_layout(**plotly_base(), height=400)
+    fig3.update_layout(**plotly_base(), height=420, showlegend=False)
     fig3.update_xaxes(tickvals=[14, 28, 56], title_text="Edad (dias)", gridcolor=GRID, zerolinecolor=ZERO_LINE)
     fig3.update_yaxes(title_text="Promedio Resistencia (kg/cm2)", gridcolor=GRID, zerolinecolor=ZERO_LINE)
     st.plotly_chart(fig3, use_container_width=True)
