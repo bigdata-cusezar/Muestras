@@ -231,29 +231,37 @@ if "archivo_data" not in st.session_state:
 
 # Widget de carga centrado en la pantalla principal
 if st.session_state.archivo_data is None:
-    st.markdown(f"""
-    <div class="upload-fullscreen">
-        <div class="upload-box">
-            <div class="upload-icon">🏗️</div>
-            <h2 style="color:{ACCENT}; margin:0 0 8px 0; font-size:24px; font-weight:700;">
+    # Centrar con columnas
+    _, col_center, _ = st.columns([1, 2, 1])
+    with col_center:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background:{BG2}; border:2px dashed {BORDER}; border-radius:20px;
+                    padding:48px 40px; text-align:center;
+                    box-shadow:0 8px 32px rgba(0,0,0,0.08);">
+            <div style="font-size:52px; margin-bottom:16px;">🏗️</div>
+            <h2 style="color:{ACCENT}; margin:0 0 10px 0; font-size:26px; font-weight:700;">
                 Control de Resistencia
             </h2>
-            <p style="color:{TEXT2}; font-size:14px; margin:0 0 24px 0;">
-                Arrastra tu archivo aquí o haz clic en el botón
+            <p style="color:{TEXT2}; font-size:14px; margin:0 0 8px 0;">
+                Carga tu archivo Excel o CSV con los datos de ensayos
+            </p>
+            <p style="color:{TEXT2}; font-size:11px; opacity:0.7; margin:0;">
+                Proyecto · OT · Cilindro N° · Tipo de mezcla · Localizacion<br>
+                Toma · Edad · Resistencia (kg/cm²) · Resistencia nominal (MPa)
             </p>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    uploaded = st.file_uploader(
-        "📂 Buscar archivo Excel o CSV",
-        type=["xlsx", "xls", "csv"],
-        label_visibility="visible",
-        help="Excel o CSV con los datos de ensayos"
-    )
-    if uploaded:
-        st.session_state.archivo_data = uploaded
-        st.rerun()
+        """, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        uploaded = st.file_uploader(
+            "📂 Seleccionar archivo",
+            type=["xlsx", "xls", "csv"],
+            label_visibility="visible",
+            help="Excel o CSV con los datos de ensayos"
+        )
+        if uploaded:
+            st.session_state.archivo_data = uploaded
+            st.rerun()
     st.stop()
 
 archivo = st.session_state.archivo_data
@@ -416,7 +424,7 @@ fig1.update_layout(**plotly_base(),
         tickmode="array",
         tickvals=tick_vals_show,
         ticktext=tick_text_show,
-        tickangle=90,
+        tickangle=0,
     ),
     yaxis=dict(title="Promedio Resistencia (kg/cm2)", gridcolor=GRID, zerolinecolor=ZERO_LINE),
     height=420,
@@ -506,21 +514,23 @@ with col_b:
                 line=dict(color=HLINE_C, width=2, dash="dash"),
                 hovertemplate="t=%{x:.0f}d<br>f(t)=%{y:.1f} kg/cm2<extra></extra>",
             ))
-            # Anotar ecuacion directamente dentro del grafico
-            x_mid = float(x_curve[len(x_curve)//2])
-            y_mid = float(log_func(x_mid, *popt))
+            # Ecuacion en esquina inferior derecha, sin recuadro, color de la linea
+            # Plotly no soporta LaTeX nativo en anotaciones — usamos unicode para estetica
+            eq_display = (
+                f"<i>f</i>(t) = {popt[0]:.2f} · ln(t)"
+                f" {'+ ' if popt[1] >= 0 else '− '}{abs(popt[1]):.2f}"
+            )
             fig3.add_annotation(
-                x=x_mid, y=y_mid,
-                text=eq_label,
+                xref="paper", yref="paper",
+                x=0.98, y=0.04,
+                text=eq_display,
                 showarrow=False,
-                bgcolor=LEG_BG,
-                bordercolor=BORDER,
-                borderwidth=1,
-                borderpad=6,
-                font=dict(size=11, color=TEXT, family="DM Mono"),
-                xanchor="center",
+                bgcolor="rgba(0,0,0,0)",
+                bordercolor="rgba(0,0,0,0)",
+                borderwidth=0,
+                font=dict(size=12, color=HLINE_C, family="DM Mono"),
+                xanchor="right",
                 yanchor="bottom",
-                yshift=14,
             )
         except Exception:
             pass
