@@ -255,9 +255,9 @@ prom28 = df28.mean()
 ds    = df28.std(ddof=1)
 n     = df["Clave Muestra"].nunique()
 cv    = ds / prom28 if prom28 else 0
-fcr1 = fc_nominal + 1.34 * ds
-fcr2 = fc_nominal + 2.33 * ds - 35
-fcr  = max(fcr1, fcr2) if fc_nominal <= 350 else max(fcr1, 0.9 * fc_nominal + 2.33 * ds)
+fcr1  = fc_nominal + 1.34 * ds
+fcr2  = fc_nominal + 2.33 * ds - 35
+fcr   = max(fcr1, fcr2) if fc_nominal <= 350 else max(fcr1, 0.9 * fc_nominal + 2.33 * ds)
 cumple = prom28 >= fcr
 cal_cv, cls_cv = calidad_cv(cv)
 cal_ds, cls_ds = calidad_ds(ds)
