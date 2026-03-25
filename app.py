@@ -336,256 +336,26 @@ def card(col, label, value, sub="", cls="", reason=""):
         {reason_html}
     </div>""", unsafe_allow_html=True)
 
+# 🔁 Conversión a MPa
+fc_nominal_mpa = fc_nominal / 10
+prom28_mpa     = prom28 / 10
+ds_mpa         = ds / 10
+fcr_mpa        = fcr / 10
+
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-card(c1, "f'c Nominal",      f"{fc_nominal:.0f}",  "kg/cm²")
-card(c2, "Promedio 28d",     f"{prom28:.1f}",       "kg/cm²")
-card(c3, "Desv. Estandar",   f"{ds:.1f}",           cal_ds, cls_ds)
-card(c4, "Coef. Variacion",  f"{cv*100:.1f}%",      cal_cv, cls_cv)
+card(c1, "f'c Nominal",      f"{fc_nominal_mpa:.2f}",  "MPa")
+card(c2, "Promedio 28d",     f"{prom28_mpa:.2f}",      "MPa")
+card(c3, "Desv. Estandar",   f"{ds_mpa:.2f}",          cal_ds, cls_ds)
+card(c4, "Coef. Variacion",  f"{cv*100:.1f}%",         cal_cv, cls_cv)
 card(c5, "N Ensayos (Tomas)", str(n))
-card(c6, "f'cr Diseno",      f"{fcr:.1f}",          "kg/cm²")
+card(c6, "f'cr Diseño",      f"{fcr_mpa:.2f}",         "MPa")
 card(c7, "NSR-10 Global",
     "Cumple" if cumple_global else "No Cumple",
     sub="x vs f'cr estadistico",
     cls="cumple" if cumple_global else "nocumple",
     reason=nsr_reason)
 
-st.markdown("<br>", unsafe_allow_html=True)
-
-# ─── GRÁFICA 1: CONTROL DE RESISTENCIA ──────────────────────────────────────
-# Unidad de análisis: ENSAYO (Toma).
-# Cada punto = promedio de los cilindros de esa toma a una edad dada.
-st.markdown('<div class="section-title">Control de Resistencia por Ensayo</div>', unsafe_allow_html=True)
-
-# Tabla de ensayos: promedio por (toma_key, Edad Estandar)
-df_ensayos = (
-    df.dropna(subset=[toma_key, res_col, "Edad Estandar"])
-    .groupby([toma_key, "Edad Estandar"], sort=True)[res_col]
-    .mean()
-    .reset_index()
-    .rename(columns={res_col: "Prom Ensayo"})
-    .sort_values(toma_key)
-)
-
-# Orden cronológico de tomas (o numérico si es número de cilindro)
-toma_order  = list(dict.fromkeys(df_ensayos[toma_key].tolist()))  # orden de aparición
-toma_to_idx = {t: i for i, t in enumerate(toma_order)}
-df_ensayos["x_pos"] = df_ensayos[toma_key].map(toma_to_idx)
-
-# Etiqueta del eje X: cilindro menor de cada toma (para referencia), o el valor de la toma
-def label_toma(t):
-    if cil_col:
-        cils = df[df[toma_key] == t][cil_col].dropna()
-        if not cils.empty:
-            return str(int(cils.min()))
-    # Si la toma es una fecha, formatear; si es número, mostrar tal cual
-    if hasattr(t, "strftime"):
-        return t.strftime("%d/%m")
-    return str(t)
-
-etiquetas_x = [label_toma(t) for t in toma_order]
-indices_x   = list(range(len(toma_order)))
-
-fig1 = go.Figure()
-
-for edad in [14, 28, 56]:
-    sub_edad     = df_ensayos[df_ensayos["Edad Estandar"] == edad]
-    tomas_en_edad = set(sub_edad[toma_key])
-
-    y_vals, x_pos, hover_texts = [], [], []
-
-    for toma in toma_order:
-        idx = toma_to_idx[toma]
-        if toma in tomas_en_edad:
-            val = sub_edad.loc[sub_edad[toma_key] == toma, "Prom Ensayo"].iloc[0]
-            # Cuántos cilindros forman este ensayo a esta edad
-            n_cil_ensayo = len(df[
-                (df[toma_key] == toma) & (df["Edad Estandar"] == edad)
-            ])
-            lbl = label_toma(toma)
-            y_vals.append(val)
-            x_pos.append(idx)
-            hover_texts.append(
-                f"<b>Ensayo — {lbl}</b><br>"
-                f"Edad: {int(edad)} días<br>"
-                f"Promedio ensayo: {val:.1f} kg/cm²<br>"
-                f"Cilindros promediados: {n_cil_ensayo}<br>"
-                f"% f'c: {val/fc_nominal*100:.1f}%"
-            )
-        else:
-            y_vals.append(None)
-            x_pos.append(idx)
-            lbl = label_toma(toma)
-            hover_texts.append(f"<b>Ensayo — {lbl}</b><br>{int(edad)}d: Sin dato")
-
-    fig1.add_trace(go.Scatter(
-        x=x_pos, y=y_vals,
-        mode="lines+markers", name=f"{int(edad)} días",
-        line=dict(color=COLORS[edad], width=2, shape="spline", smoothing=0.5),
-        marker=dict(size=6, color=COLORS[edad]),
-        connectgaps=False,
-        hovertemplate="%{customdata}<extra></extra>",
-        customdata=hover_texts,
-    ))
-
-prom_general = df_ensayos[df_ensayos["Edad Estandar"] == 28]["Prom Ensayo"].mean()
-
-_fc_pos   = "right top"    if fc_nominal >= prom_general else "right bottom"
-_prom_pos = "right bottom" if fc_nominal >= prom_general else "right top"
-
-fig1.add_hline(
-    y=fc_nominal, line_dash="dot", line_color=HLINE_C,
-    annotation_text=f"f'c: {fc_nominal:.0f}",
-    annotation_font_color=HLINE_C,
-    annotation_position=_fc_pos,
-)
-fig1.add_hline(
-    y=prom_general, line_dash="dot", line_color=HLINE2_C,
-    annotation_text=f"Prom. General: {prom_general:.2f}",
-    annotation_font_color=HLINE2_C,
-    annotation_position=_prom_pos,
-)
-
-n_ensayos = len(toma_order)
-if n_ensayos <= 40:    step = 1
-elif n_ensayos <= 80:  step = 2
-elif n_ensayos <= 160: step = 5
-else:                  step = 10
-
-tick_vals_show = [indices_x[i] for i in range(0, n_ensayos, step)]
-tick_text_show = [etiquetas_x[i] for i in range(0, n_ensayos, step)]
-
-fig1.update_layout(**plotly_base(),
-    xaxis=dict(
-        title="Ensayo (etiqueta = cil. menor de la toma)",
-        gridcolor=GRID, zerolinecolor=ZERO_LINE,
-        tickmode="array", tickvals=tick_vals_show, ticktext=tick_text_show,
-        tickangle=0,
-    ),
-    yaxis=dict(title="Promedio Resistencia por Ensayo (kg/cm²)", gridcolor=GRID, zerolinecolor=ZERO_LINE),
-    height=420,
-    hovermode="x unified",
-)
-st.plotly_chart(fig1, use_container_width=True)
-
-# ─── GRÁFICAS 2 Y 3 ──────────────────────────────────────────────────────────
-col_a, col_b = st.columns(2)
-
-with col_a:
-    st.markdown('<div class="section-title">Distribucion Normal</div>', unsafe_allow_html=True)
-    # La distribución se construye sobre los promedios de ensayo (no cilindros individuales)
-    mu    = df28.mean() if not df28.empty else 0
-    x_rel = np.linspace(-250, 250, 500)
-    freq_counts, freq_bins = np.histogram(df28 - mu, bins=np.arange(-250, 260, 10))
-    bin_centers = (freq_bins[:-1] + freq_bins[1:]) / 2
-
-    fig2 = make_subplots(specs=[[{"secondary_y": True}]])
-    fig2.add_trace(go.Bar(
-        x=bin_centers, y=freq_counts, name="Frecuencia",
-        marker_color="rgba(74,144,217,0.35)",
-        marker_line_color="rgba(74,144,217,0.7)", marker_line_width=1,
-        hovertemplate="Intervalo: %{x:.0f}<br>Frecuencia: %{y}<extra></extra>",
-    ), secondary_y=False)
-
-    for nombre, sigma in {
-        "Distribucion Real": ds if ds > 0 else 1,
-        "Aceptable":         50,
-        "Bueno":             45,
-        "Muy Bueno":         37.5,
-        "Excelente":         30,
-    }.items():
-        pdf = stats.norm.pdf(x_rel, 0, sigma)
-        fig2.add_trace(go.Scatter(
-            x=x_rel, y=pdf, mode="lines", name=nombre,
-            line=dict(color=CURVE_COLORS.get(nombre, ACCENT), width=2,
-                      dash="solid" if "Real" in nombre else "dot"),
-            hovertemplate=f"{nombre}<br>x: %{{x:.1f}}<br>Densidad: %{{y:.5f}}<extra></extra>",
-        ), secondary_y=True)
-
-    fig2.update_layout(
-        paper_bgcolor=PAPER_BG, plot_bgcolor=PLOT_BG,
-        font=dict(family="DM Sans", color=TEXT, size=12),
-        margin=dict(t=50, b=80, l=50, r=20), height=400,
-        xaxis_title="x relativo (kg/cm²)",
-        legend=dict(orientation="h", y=-0.38, font=dict(size=10, color=TEXT),
-                    bgcolor=LEG_BG, bordercolor=BORDER, borderwidth=1),
-    )
-    fig2.update_yaxes(title_text="Frecuencia", gridcolor=GRID, zerolinecolor=ZERO_LINE, secondary_y=False)
-    fig2.update_yaxes(title_text="Densidad",   gridcolor=GRID, zerolinecolor=ZERO_LINE, secondary_y=True)
-    fig2.update_xaxes(gridcolor=GRID, zerolinecolor=ZERO_LINE)
-    st.plotly_chart(fig2, use_container_width=True)
-
-with col_b:
-    st.markdown('<div class="section-title">Resistencia vs Tiempo</div>', unsafe_allow_html=True)
-
-    # Promedio por edad estandarizada (promedio de promedios de ensayo)
-    promedios_edad = []
-    for edad in [14, 28, 56]:
-        sub = df_ensayos[df_ensayos["Edad Estandar"] == edad]["Prom Ensayo"].dropna()
-        if not sub.empty:
-            promedios_edad.append({"Edad": edad, "Promedio": sub.mean()})
-    df_evol = pd.DataFrame(promedios_edad)
-
-    fig3 = go.Figure()
-    if len(df_evol) >= 2:
-        try:
-            def log_func(x, a, b): return a * np.log(x) + b
-            popt, _ = curve_fit(log_func, df_evol["Edad"], df_evol["Promedio"])
-            x_curve = np.linspace(1, 70, 300)
-            y_curve = log_func(x_curve, *popt)
-            primer_val = df_evol["Promedio"].iloc[0]
-            ultimo_val = df_evol["Promedio"].iloc[-1]
-            rango_pct  = abs(ultimo_val - primer_val) / max(primer_val, ultimo_val) * 0.5
-            y_upper    = y_curve * (1 + rango_pct)
-            y_lower    = y_curve * (1 - rango_pct)
-
-            fig3.add_trace(go.Scatter(
-                x=np.concatenate([x_curve, x_curve[::-1]]),
-                y=np.concatenate([y_upper, y_lower[::-1]]),
-                fill="toself", fillcolor="rgba(74,144,217,0.12)",
-                line=dict(color="rgba(0,0,0,0)"),
-                name="Rango ±", hoverinfo="skip",
-            ))
-            fig3.add_trace(go.Scatter(
-                x=x_curve, y=y_curve, mode="lines", name="Regresion log",
-                line=dict(color=HLINE_C, width=2, dash="dash"),
-                hovertemplate="t=%{x:.0f}d<br>f(t)=%{y:.1f} kg/cm²<extra></extra>",
-            ))
-            eq_display = (
-                f"<i>f</i>(t) = {popt[0]:.2f} · ln(t)"
-                f" {'+ ' if popt[1] >= 0 else '− '}{abs(popt[1]):.2f}"
-            )
-            fig3.add_annotation(
-                xref="paper", yref="paper", x=0.98, y=0.04,
-                text=eq_display, showarrow=False,
-                bgcolor="rgba(0,0,0,0)", bordercolor="rgba(0,0,0,0)", borderwidth=0,
-                font=dict(size=12, color=HLINE_C, family="DM Mono"),
-                xanchor="right", yanchor="bottom",
-            )
-        except Exception:
-            pass
-
-    fig3.add_trace(go.Scatter(
-        x=df_evol["Edad"], y=df_evol["Promedio"],
-        mode="markers+text", name="Promedio por edad",
-        marker=dict(size=12, color=[COLORS.get(e, ACCENT) for e in df_evol["Edad"]],
-                    line=dict(width=2, color=TEXT)),
-        text=[f"{v:.1f}" for v in df_evol["Promedio"]],
-        textposition="top center",
-        textfont=dict(size=11, color=TEXT),
-        hovertemplate="Edad: %{x}d<br>Promedio: %{y:.1f} kg/cm²<extra></extra>",
-    ))
-    fig3.add_hline(y=fc_nominal, line_dash="dot", line_color=HLINE_C,
-                   annotation_text=f"f'c = {fc_nominal:.0f}",
-                   annotation_font_color=HLINE_C)
-    fig3.update_layout(**plotly_base(), height=420, showlegend=False)
-    fig3.update_xaxes(tickvals=[14, 28, 56], title_text="Edad (días)", gridcolor=GRID, zerolinecolor=ZERO_LINE)
-    fig3.update_yaxes(title_text="Promedio Resistencia (kg/cm²)", gridcolor=GRID, zerolinecolor=ZERO_LINE)
-    st.plotly_chart(fig3, use_container_width=True)
-
 # ─── TABLA DETALLE ───────────────────────────────────────────────────────────
-# Cada fila = un ENSAYO (Toma).
-# La resistencia reportada es el PROMEDIO de los cilindros de esa toma.
-# La verificación NSR-10 individual se hace sobre ese promedio, no sobre cilindros sueltos.
 st.markdown('<div class="section-title">Detalle por Ensayo (Toma)</div>', unsafe_allow_html=True)
 
 n_no_cumple = 0
@@ -601,36 +371,37 @@ for toma in sorted(df[toma_key].dropna().unique()):
             locs = df_toma[loc_col].dropna()
             row["Localización"] = locs.iloc[0] if not locs.empty else ""
 
-        # Fecha de toma (si la columna es fecha)
         if toma_col and toma_col in df_toma.columns:
             fechas = df_toma[toma_col].dropna()
             if not fechas.empty:
                 fecha = fechas.iloc[0]
-                row["Fecha Toma"] = fecha.strftime("%Y-%m-%d") if hasattr(fecha, "strftime") and pd.notna(fecha) else ""
+                row["Fecha Toma"] = fecha.strftime("%Y-%m-%d") if hasattr(fecha, "strftime") else ""
             else:
                 row["Fecha Toma"] = ""
 
-        # Cilindros que componen esta toma
         if cil_col:
             cils = df_toma[cil_col].dropna()
             row["Cilindros"] = ", ".join(str(int(c)) for c in sorted(cils.unique()))
 
-        # Promedio por edad: media de todos los cilindros de esta toma a esa edad
+        # 🔁 PROMEDIOS EN MPa
         for edad in [14, 28, 56]:
             vals = df_toma[df_toma["Edad Estandar"] == edad][res_col].dropna()
             if not vals.empty:
-                row[f"Prom {int(edad)}d (kg/cm²)"] = round(float(vals.mean()), 1)
-                row[f"N cil {int(edad)}d"]          = len(vals)
+                valor_kg = float(vals.mean())
+                valor_mpa = valor_kg / 10
+                row[f"Prom {int(edad)}d (MPa)"] = round(valor_mpa, 2)
+                row[f"N cil {int(edad)}d"] = len(vals)
             else:
-                row[f"Prom {int(edad)}d (kg/cm²)"] = None
-                row[f"N cil {int(edad)}d"]          = 0
+                row[f"Prom {int(edad)}d (MPa)"] = None
+                row[f"N cil {int(edad)}d"] = 0
 
-        prom28_toma = row.get("Prom 28d (kg/cm²)")
-        row["% f'c"] = f"{prom28_toma / fc_nominal * 100:.1f}%" if prom28_toma else None
+        prom28_toma = row.get("Prom 28d (MPa)")
+        row["% f'c"] = f"{prom28_toma / fc_nominal_mpa * 100:.1f}%" if prom28_toma else None
 
-        # Verificación NSR-10 individual: el promedio del ensayo debe ser > umbral
+        # 🔁 VALIDACIÓN EN kg/cm²
         if prom28_toma:
-            cumple_toma = prom28_toma > umbral_nsr
+            prom28_kg = prom28_toma * 10
+            cumple_toma = prom28_kg > umbral_nsr
             row["NSR-10"] = "✅ Cumple" if cumple_toma else "❌ No Cumple"
             if not cumple_toma:
                 n_no_cumple += 1
@@ -638,22 +409,23 @@ for toma in sorted(df[toma_key].dropna().unique()):
             row["NSR-10"] = "—"
 
         tabla_rows.append(row)
+
     except Exception:
         continue
 
-df_tabla    = pd.DataFrame(tabla_rows)
-total_con28 = sum(1 for r in tabla_rows if r.get("Prom 28d (kg/cm²)"))
+df_tabla = pd.DataFrame(tabla_rows)
+
+total_con28 = sum(1 for r in tabla_rows if r.get("Prom 28d (MPa)"))
 pct_cumple  = (total_con28 - n_no_cumple) / total_con28 * 100 if total_con28 else 0
 
+# 🔁 Umbral en MPa
+umbral_mpa = umbral_nsr / 10
+
 m1, m2, m3 = st.columns(3)
-m1.metric("Umbral individual NSR-10", f"{umbral_nsr:.0f} kg/cm²",
-          delta=f"f'c {'− 35' if fc_nominal <= 350 else '× 0.9'}")
+m1.metric("Umbral individual NSR-10", f"{umbral_mpa:.2f} MPa",
+          delta=f"f'c {'− 3.5' if fc_nominal <= 350 else '× 0.9'}")
 m2.metric("Ensayos que No Cumplen", str(n_no_cumple),
           delta=f"de {total_con28} ensayos con datos a 28d", delta_color="inverse")
 m3.metric("% Cumplimiento por ensayo", f"{pct_cumple:.1f}%")
 
 st.dataframe(df_tabla, use_container_width=True, hide_index=True)
-
-# ─── FOOTER ──────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.caption("Control Estadístico de Resistencia · NSR-10 / ACI 318")
