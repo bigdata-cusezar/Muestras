@@ -297,28 +297,86 @@ df = df_raw[
     (df_raw["Edad Estandar"].notna())
 ].copy()
 
-# ─── ESTADÍSTICOS ────────────────────────────────────────────────────────────
-fc_nominal = df[nom_col].dropna().iloc[0] * 10 if nom_col and not df[nom_col].dropna().empty else 125
-df28       = df[df["Edad Estandar"] == 28][res_col].dropna() if res_col else pd.Series()
-prom28     = df28.mean() if not df28.empty else 0
-ds         = df28.std(ddof=1) if len(df28) > 1 else 0
+# ─── ESTADÍSTICOS NSR-10 CORREGIDOS ─────────────────────────────────────────
+fc_mpa     = df[nom_col].dropna().iloc[0] if nom_col and not df[nom_col].dropna().empty else 12.5
+fc_nominal = fc_mpa * 10  # kg/cm²
 
-# FIX 1: N muestras — contar Cilindros únicos directamente
-n = df[cil_col].nunique() if cil_col else 0
+# ── 1. Ensayos como promedios por muestra (C.5.6.2.4) ────────────────────────
+# La unidad básica de analisis es el promedio de cilindros del mismo Cilindro N°
+df28_todos  = df[df["Edad Estandar"] == 28].copy() if res_col else pd.DataFrame()
+if not df28_todos.empty and cil_col:
+    prom_por_cil_28 = df28_todos.groupby(cil_col)[res_col].mean()
+else:
+    prom_por_cil_28 = pd.Series()
+
+n      = len(prom_por_cil_28)           # n° de ensayos (muestras), no cilindros individuales
+prom28 = prom_por_cil_28.mean() if n > 0 else 0
+ds_raw = prom_por_cil_28.std(ddof=1) if n > 1 else 0
+
+# ── 2. Factor de corrección Tabla C.5.3.1.2 ──────────────────────────────────
+if n >= 30:
+    factor_corr = 1.00
+elif n >= 25:
+    factor_corr = round(1.03 + 0.006 * (25 - n), 4)
+elif n >= 20:
+    factor_corr = round(1.08 + 0.010 * (20 - n), 4)
+elif n >= 15:
+    factor_corr = round(1.16 + 0.016 * (15 - n), 4)
+else:
+    factor_corr = None   # n < 15: no se puede usar Ds — usar Tabla C.5.3.2.2
+
+ds = ds_raw * factor_corr if factor_corr is not None else ds_raw
+
+# ── 3. f'cr según disponibilidad de Ds ───────────────────────────────────────
+usar_tabla_C5322 = (factor_corr is None)  # n < 15
+
+if not usar_tabla_C5322:
+    # Tabla C.5.3.2.1 — hay Ds confiable
+    fcr1 = fc_nominal + 1.34 * ds
+    fcr2 = fc_nominal + 2.33 * ds - 35
+    fcr3 = 0.9 * fc_nominal + 2.33 * ds
+    fcr  = max(fcr1, fcr2) if fc_nominal <= 350 else max(fcr1, fcr3)
+    fcr_origen = f"Tabla C.5.3.2.1 (n={n}, factor={factor_corr:.3f})"
+else:
+    # Tabla C.5.3.2.2 — sin Ds confiable (n < 15)
+    if fc_mpa < 21:
+        fcr = fc_nominal + 70    # +7 MPa
+    elif fc_mpa <= 35:
+        fcr = fc_nominal + 83    # +8.3 MPa
+    else:
+        fcr = 1.10 * fc_nominal + 50
+    fcr_origen = f"Tabla C.5.3.2.2 (n={n} < 15, sin Ds confiable)"
+
+# ── 4. Advertencia de aplicabilidad normativa ─────────────────────────────────
+fuera_alcance = fc_mpa < 17.0   # C.5.1.1: Titulo C aplica solo a f'c >= 17 MPa
+
+# ── 5. Criterio individual C.5.6.3.3(b) ─────────────────────────────────────
+umbral_nsr = fc_nominal - 35 if fc_nominal <= 350 else fc_nominal * 0.1
+
+# ── 6. Criterio grupos de 3 consecutivos C.5.6.3.3(a) ───────────────────────
+promedios_lista  = list(prom_por_cil_28.values) if not prom_por_cil_28.empty else []
+grupos_3         = [np.mean(promedios_lista[i:i+3]) for i in range(len(promedios_lista)-2)]
+grupos_fallan_a  = sum(1 for g in grupos_3 if g < fc_nominal)
+cumple_criterio_a = (grupos_fallan_a == 0) and (len(grupos_3) > 0)
+
+# ── 7. Cumplimiento global combinado ─────────────────────────────────────────
+cumple_global = cumple_criterio_a and (prom28 >= fcr)
 
 cv     = ds / prom28 if prom28 else 0
-fcr1   = fc_nominal + 1.34 * ds
-fcr2   = fc_nominal + 2.33 * ds - 35
-fcr    = max(fcr1, fcr2) if fc_nominal <= 350 else max(fcr1, 0.9 * fc_nominal + 2.33 * ds)
-cumple_global = prom28 >= fcr
-umbral_nsr    = fc_nominal - 35 if fc_nominal <= 350 else fc_nominal * 0.9
 cal_cv, cls_cv = calidad_cv(cv)
 cal_ds, cls_ds = calidad_ds(ds)
 
-if cumple_global:
-    nsr_reason = f"x={prom28:.1f} >= f'cr={fcr:.1f}"
-else:
+# Texto de razón para la tarjeta NSR-10
+if fuera_alcance:
+    nsr_reason = f"f'c={fc_mpa} MPa < 17 MPa (Titulo C no aplica formalmente)"
+elif usar_tabla_C5322:
+    nsr_reason = f"n={n}<15: se usa Tabla C.5.3.2.2. f'cr={fcr:.1f}"
+elif not cumple_criterio_a:
+    nsr_reason = f"{grupos_fallan_a} grupos de 3 consecutivos < f'c={fc_nominal:.0f}"
+elif prom28 < fcr:
     nsr_reason = f"x={prom28:.1f} < f'cr={fcr:.1f} (faltan {fcr-prom28:.1f})"
+else:
+    nsr_reason = f"x={prom28:.1f} >= f'cr={fcr:.1f} | grupos de 3: OK"
 
 # ─── TARJETAS KPI ────────────────────────────────────────────────────────────
 st.markdown(f"### {proyecto_sel} &nbsp;·&nbsp; {tipo_sel}", unsafe_allow_html=True)
@@ -333,16 +391,29 @@ def card(col, label, value, sub="", cls="", reason=""):
         {reason_html}
     </div>""", unsafe_allow_html=True)
 
+# Advertencia fuera de alcance
+if fuera_alcance:
+    st.warning(
+        f"⚠️ **Nota normativa:** El Título C de la NSR-10 aplica formalmente solo a concreto con "
+        f"f'c ≥ 17 MPa (C.5.1.1). Este tipo de mezcla ({tipo_sel}, f'c = {fc_mpa} MPa) "
+        f"está fuera de ese alcance. Los criterios se aplican por extensión práctica, "
+        f"no por obligación normativa."
+    )
+
 c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
 card(c1, "f'c Nominal",     f"{fc_nominal:.0f}",  "kg/cm2")
 card(c2, "Promedio 28d",    f"{prom28:.1f}",       "kg/cm2")
-card(c3, "Desv. Estandar",  f"{ds:.1f}",           cal_ds, cls_ds)
+card(c3, "Desv. Estandar",
+    f"{ds:.1f}" + (f" ×{factor_corr}" if factor_corr and factor_corr != 1.0 else ""),
+    cal_ds, cls_ds,
+    reason=f"Ds raw={ds_raw:.1f}, factor={factor_corr if factor_corr else 'N/A (n<15)'}")
 card(c4, "Coef. Variacion", f"{cv*100:.1f}%",      cal_cv, cls_cv)
-card(c5, "N Muestras",      str(n))
-card(c6, "f'cr Diseno",     f"{fcr:.1f}",          "kg/cm2")
-card(c7, "NSR-10 Global",
+card(c5, "N Ensayos",       str(n),                "promedios por muestra")
+card(c6, "f'cr Diseno",     f"{fcr:.1f}",          "kg/cm2",
+    reason="Tab C.5.3.2.2" if usar_tabla_C5322 else f"Tab C.5.3.2.1 · f={factor_corr:.3f}")
+card(c7, "NSR-10",
     "Cumple" if cumple_global else "No Cumple",
-    sub="x vs f'cr estadistico",
+    sub="C.5.6.3.3 (a)+(b)",
     cls="cumple" if cumple_global else "nocumple",
     reason=nsr_reason)
 
@@ -565,11 +636,28 @@ with col_b:
     st.plotly_chart(fig3, use_container_width=True)
 
 # ─── TABLA DETALLE ───────────────────────────────────────────────────────────
-st.markdown('<div class="section-title">Detalle por Muestra</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Detalle por Muestra — Criterios C.5.6.3.3</div>', unsafe_allow_html=True)
 
-n_no_cumple = 0
+# Criterio (a): grupos de 3 consecutivos — mapear cuales cilindros fallan
+cil_ordenados    = sorted(df[cil_col].dropna().unique())
+prom28_ordenado  = [prom_por_cil_28.get(c, None) for c in cil_ordenados]
+
+# Para cada cilindro, verificar si pertenece a algun grupo de 3 que falla (a)
+cil_falla_grupo = set()
+vals_validos = [(i, v) for i, v in enumerate(prom28_ordenado) if v is not None]
+for k in range(len(vals_validos)-2):
+    i0, v0 = vals_validos[k]
+    i1, v1 = vals_validos[k+1]
+    i2, v2 = vals_validos[k+2]
+    if np.mean([v0, v1, v2]) < fc_nominal:
+        cil_falla_grupo.add(cil_ordenados[i0])
+        cil_falla_grupo.add(cil_ordenados[i1])
+        cil_falla_grupo.add(cil_ordenados[i2])
+
+n_no_cumple_b = 0
+n_no_cumple_a = 0
 tabla_rows  = []
-for cil in sorted(df[cil_col].dropna().unique()):
+for cil in cil_ordenados:
     try:
         df_cil = df[df[cil_col] == cil]
         row    = {"N": int(cil)}
@@ -582,32 +670,60 @@ for cil in sorted(df[cil_col].dropna().unique()):
             row["Fecha Toma"] = fecha.strftime("%Y-%m-%d") if fecha is not None and not pd.isna(fecha) else ""
         for edad in [14, 28, 56]:
             vals = df_cil[df_cil["Edad Estandar"] == edad][res_col].dropna()
-            row[f"Prom {edad}d (kg/cm2)"] = round(float(vals.mean()), 1) if not vals.empty else None
-        prom28_cil = row.get("Prom 28d (kg/cm2)")
+            row[f"Prom {edad}d"] = round(float(vals.mean()), 1) if not vals.empty else None
+        prom28_cil = row.get("Prom 28d")
         row["% f'c"] = f"{prom28_cil / fc_nominal * 100:.1f}%" if prom28_cil else None
         if prom28_cil:
-            cumple_cil = prom28_cil > umbral_nsr
-            # FIX 4: Iconos de cumplimiento restaurados
-            row["NSR-10"] = "✅ Cumple" if cumple_cil else "❌ No Cumple"
-            if not cumple_cil:
-                n_no_cumple += 1
+            # Criterio (b) C.5.6.3.3 — individual > umbral
+            cumple_b = prom28_cil > umbral_nsr
+            # Criterio (a) C.5.6.3.3 — pertenece a grupo de 3 que falla
+            falla_a  = cil in cil_falla_grupo
+            if not cumple_b:
+                n_no_cumple_b += 1
+            if falla_a:
+                n_no_cumple_a += 1
+            if cumple_b and not falla_a:
+                row["NSR-10 (b)"] = "✅"
+                row["NSR-10 (a)"] = "✅"
+            elif not cumple_b and not falla_a:
+                row["NSR-10 (b)"] = "❌"
+                row["NSR-10 (a)"] = "✅"
+            elif cumple_b and falla_a:
+                row["NSR-10 (b)"] = "✅"
+                row["NSR-10 (a)"] = "⚠️"
+            else:
+                row["NSR-10 (b)"] = "❌"
+                row["NSR-10 (a)"] = "⚠️"
         else:
-            row["NSR-10"] = "—"
+            row["NSR-10 (b)"] = "—"
+            row["NSR-10 (a)"] = "—"
         tabla_rows.append(row)
     except Exception:
         continue
 
 df_tabla    = pd.DataFrame(tabla_rows)
-total_con28 = sum(1 for r in tabla_rows if r.get("Prom 28d (kg/cm2)"))
-pct_cumple  = (total_con28 - n_no_cumple) / total_con28 * 100 if total_con28 else 0
+total_con28 = sum(1 for r in tabla_rows if r.get("Prom 28d"))
+pct_cumple  = (total_con28 - n_no_cumple_b) / total_con28 * 100 if total_con28 else 0
 
-m1, m2, m3 = st.columns(3)
-m1.metric("Umbral individual NSR-10", f"{umbral_nsr:.0f} kg/cm2",
+# Resumen de cumplimiento con ambos criterios
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Umbral indiv. C.5.6.3.3(b)",
+          f"{umbral_nsr:.0f} kg/cm2",
           delta=f"f'c {'- 35' if fc_nominal <= 350 else 'x 0.9'}")
-m2.metric("Muestras que No Cumplen", str(n_no_cumple),
-          delta=f"de {total_con28} con datos a 28d", delta_color="inverse")
-m3.metric("% Cumplimiento individual", f"{pct_cumple:.1f}%")
+m2.metric("Fallan criterio (b)",
+          str(n_no_cumple_b),
+          delta=f"de {total_con28} ensayos a 28d", delta_color="inverse")
+m3.metric("Grupos de 3 que fallan (a)",
+          str(grupos_fallan_a),
+          delta=f"de {len(grupos_3)} grupos evaluados",
+          delta_color="inverse" if grupos_fallan_a > 0 else "off")
+m4.metric("% Cumplimiento (b)",
+          f"{pct_cumple:.1f}%")
 
+st.caption(
+    "**NSR-10 (b):** Criterio individual C.5.6.3.3(b) — promedio muestra > umbral. "
+    "**NSR-10 (a):** ⚠️ = este cilindro pertenece a un grupo de 3 consecutivos cuyo promedio < f'c (C.5.6.3.3a)."
+)
 st.dataframe(df_tabla, use_container_width=True, hide_index=True)
 
 # ─── FOOTER ──────────────────────────────────────────────────────────────────
