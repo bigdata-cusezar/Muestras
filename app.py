@@ -604,6 +604,16 @@ with col_a:
             ),
             hovertemplate=f"{nombre}<br>x: %{{x:.1f}}<br>Frecuencia esperada: %{{y:.1f}}<extra></extra>",
         ))
+        # ─── LÍNEA VERTICAL DE LA MEDIA ───
+        fig2.add_vline(
+            x=mu,
+            line_width=2,
+            line_dash="dash",
+            line_color="#00c853",  # puedes cambiar el color si quieres
+            annotation_text=f"Media μ = {mu:.1f}",
+            annotation_position="top",
+            annotation_font_color="#00c853"
+        )
 
     fig2.update_layout(
         paper_bgcolor=PAPER_BG, plot_bgcolor=PLOT_BG,
