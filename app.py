@@ -414,19 +414,38 @@ def card(col, label, value, sub="", cls="", reason=""):
         {reason_html}
     </div>""", unsafe_allow_html=True)
 
-c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
-card(c1, "f'c Nominal",     f"{fc_nominal:.0f}",  "kg/cm2")
-card(c2, "Promedio 28d",    f"{prom28:.1f}",       "kg/cm2")
-card(c3, "Desv. Estandar",  f"{ds:.1f}",           cal_ds, cls_ds)
-card(c4, "Coef. Variacion", f"{cv*100:.1f}%",      cal_cv, cls_cv)
-card(c5, "N Muestras", str(n),
-    sub=f"N14={n14}  N28={n}  N56={n56}")
-card(c6, "f'cr Diseno",     f"{fcr:.1f}",          "kg/cm2")
-card(c7, "NSR-10 Global",
-    "Cumple" if cumple_global else "No Cumple",
-    sub="x vs f'cr estadistico",
-    cls="cumple" if cumple_global else "nocumple",
-    reason=nsr_reason)
+# ─── KPIs dinámicos según tipo de mezcla ───
+
+tipos_sin_nsr = ["Mortero", "Grauting"]
+
+if tipo_sel in tipos_sin_nsr:
+    # 6 columnas (sin NSR-10 Global)
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+
+    card(c1, "f'c Nominal",     f"{fc_nominal:.0f}",  "kg/cm2")
+    card(c2, "Promedio 28d",    f"{prom28:.1f}",       "kg/cm2")
+    card(c3, "Desv. Estandar",  f"{ds:.1f}",           cal_ds, cls_ds)
+    card(c4, "Coef. Variacion", f"{cv*100:.1f}%",      cal_cv, cls_cv)
+    card(c5, "N Muestras", str(n),
+        sub=f"N14={n14}  N28={n}  N56={n56}")
+    card(c6, "f'cr Diseno",     f"{fcr:.1f}",          "kg/cm2")
+
+else:
+    # 7 columnas (con NSR-10 Global)
+    c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
+
+    card(c1, "f'c Nominal",     f"{fc_nominal:.0f}",  "kg/cm2")
+    card(c2, "Promedio 28d",    f"{prom28:.1f}",       "kg/cm2")
+    card(c3, "Desv. Estandar",  f"{ds:.1f}",           cal_ds, cls_ds)
+    card(c4, "Coef. Variacion", f"{cv*100:.1f}%",      cal_cv, cls_cv)
+    card(c5, "N Muestras", str(n),
+        sub=f"N14={n14}  N28={n}  N56={n56}")
+    card(c6, "f'cr Diseno",     f"{fcr:.1f}",          "kg/cm2")
+    card(c7, "NSR-10 Global",
+        "Cumple" if cumple_global else "No Cumple",
+        sub="x vs f'cr estadistico",
+        cls="cumple" if cumple_global else "nocumple",
+        reason=nsr_reason)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
