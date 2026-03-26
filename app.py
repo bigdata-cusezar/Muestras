@@ -296,7 +296,12 @@ with fc3:
     if nom_col and len(nominales_disponibles) > 0:
         # Construir etiquetas legibles: "21 MPa (210 kg/cm²)"
         def label_nominal(mpa):
-            return f"{mpa:.1f} MPa  ({mpa*10:.0f} kg/cm²)"
+            # Verifica si es entero (ej: 21.0)
+            if float(mpa).is_integer():
+                mpa_str = f"{mpa:.0f}"
+            else:
+                mpa_str = f"{mpa:.1f}"    
+            return f"{mpa_str} MPa  ({mpa*10:.0f} kg/cm²)"
 
         nominal_labels = [label_nominal(v) for v in nominales_disponibles]
         nominal_label_sel = st.selectbox(
