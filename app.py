@@ -416,7 +416,7 @@ def card(col, label, value, sub="", cls="", reason=""):
 
 # ─── KPIs dinámicos según tipo de mezcla ───
 
-tipos_sin_nsr = ["Mortero", "Grauting"]
+tipos_sin_nsr = ["Mortero", "Grouting"]
 
 if tipo_sel in tipos_sin_nsr:
     # 6 columnas (sin NSR-10 Global)
