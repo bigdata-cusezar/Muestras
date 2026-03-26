@@ -338,7 +338,7 @@ else:
     ].copy()
     fc_mpa = df[nom_col].dropna().iloc[0] if nom_col and not df[nom_col].dropna().empty else 12.5
 
-fc_nominal = fc_mpa * 10.1972  # kg/cm²
+fc_nominal = fc_mpa * 10  # kg/cm²
 
 # ─── ESTADÍSTICOS ────────────────────────────────────────────────────────────
 
