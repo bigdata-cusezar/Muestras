@@ -202,14 +202,13 @@ def cargar_datos(archivo):
     for col in [c for c in df.columns if c in ["Toma","Recepcion","Rotura","Recepción"]]:
         df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    edad_col              = col_edad[0] if col_edad else None
+    edad_col = col_edad[0] if col_edad else None
     if edad_col:
         df["Edad Estandar"] = df[edad_col].apply(estandarizar_edad)
     df["Nombre Proyecto"] = df["Proyecto"].apply(extraer_nombre_proyecto)
 
     cil_col = get_cil_col(df)
     if cil_col:
-        # FIX 1: Clave Muestra usa el nombre real de la columna Cilindro
         df["Clave Muestra"] = df.apply(
             lambda r: f"{r['Tipo de mezcla']}-{r[cil_col]}"
             if pd.notna(r.get(cil_col)) else None, axis=1
@@ -224,14 +223,11 @@ def get_nominal_col(df):
     cols = [c for c in df.columns if "nominal" in c.lower()]
     return cols[0] if cols else None
 
-# ─── PANTALLA DE CARGA (sin sidebar) ────────────────────────────────────────
-# Usamos session_state para manejar el archivo fuera del sidebar
+# ─── PANTALLA DE CARGA ────────────────────────────────────────────────────────
 if "archivo_data" not in st.session_state:
     st.session_state.archivo_data = None
 
-# Widget de carga centrado en la pantalla principal
 if st.session_state.archivo_data is None:
-    # Centrar con columnas
     _, col_center, _ = st.columns([1, 2, 1])
     with col_center:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
@@ -277,49 +273,126 @@ proyectos = sorted(df_raw["Nombre Proyecto"].dropna().unique())
 tipos     = sorted(df_raw["Tipo de mezcla"].dropna().unique())
 
 st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
-fc1, fc2, fc3, fc4 = st.columns([3, 2, 1, 1])
+fc1, fc2, fc3, fc4, fc5 = st.columns([3, 2, 1.5, 1, 1])
+
 with fc1:
     proyecto_sel = st.selectbox("Proyecto", proyectos, label_visibility="visible")
 with fc2:
     tipo_sel = st.selectbox("Tipo de mezcla", tipos, label_visibility="visible")
+
+# ── Filtro intermedio: Proyecto + Tipo de mezcla para calcular las f'c disponibles ──
+df_pre = df_raw[
+    (df_raw["Nombre Proyecto"] == proyecto_sel) &
+    (df_raw["Tipo de mezcla"]  == tipo_sel)
+].copy()
+
+# Obtener valores únicos de resistencia nominal para la combinación seleccionada
+if nom_col:
+    nominales_disponibles = sorted(df_pre[nom_col].dropna().unique())
+else:
+    nominales_disponibles = []
+
 with fc3:
+    if nom_col and len(nominales_disponibles) > 0:
+        # Construir etiquetas legibles: "21 MPa (210 kg/cm²)"
+        def label_nominal(mpa):
+            return f"{mpa:.0f} MPa  ({mpa*10:.0f} kg/cm²)"
+
+        nominal_labels = [label_nominal(v) for v in nominales_disponibles]
+        nominal_label_sel = st.selectbox(
+            "Resistencia nominal (f'c)",
+            nominal_labels,
+            label_visibility="visible",
+            help="Filtra los ensayos por la resistencia nominal de diseño"
+        )
+        # Recuperar el valor MPa seleccionado
+        fc_mpa_sel = nominales_disponibles[nominal_labels.index(nominal_label_sel)]
+    else:
+        st.caption("Sin datos de f'c")
+        fc_mpa_sel = None
+
+with fc4:
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption(f"**{len(df_raw)}** registros totales")
-with fc4:
+with fc5:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🔄 Cambiar archivo"):
         st.session_state.archivo_data = None
         st.rerun()
 
-df = df_raw[
-    (df_raw["Nombre Proyecto"] == proyecto_sel) &
-    (df_raw["Tipo de mezcla"]  == tipo_sel) &
-    (df_raw["Edad Estandar"].notna())
-].copy()
+# ─── FILTRADO FINAL incluyendo resistencia nominal ────────────────────────────
+if nom_col and fc_mpa_sel is not None:
+    df = df_raw[
+        (df_raw["Nombre Proyecto"] == proyecto_sel) &
+        (df_raw["Tipo de mezcla"]  == tipo_sel) &
+        (df_raw[nom_col]           == fc_mpa_sel) &
+        (df_raw["Edad Estandar"].notna())
+    ].copy()
+    fc_mpa     = fc_mpa_sel
+else:
+    # Fallback: sin columna nominal, mismo comportamiento anterior
+    df = df_raw[
+        (df_raw["Nombre Proyecto"] == proyecto_sel) &
+        (df_raw["Tipo de mezcla"]  == tipo_sel) &
+        (df_raw["Edad Estandar"].notna())
+    ].copy()
+    fc_mpa = df[nom_col].dropna().iloc[0] if nom_col and not df[nom_col].dropna().empty else 12.5
+
+fc_nominal = fc_mpa * 10  # kg/cm²
 
 # ─── ESTADÍSTICOS ────────────────────────────────────────────────────────────
-fc_nominal = df[nom_col].dropna().iloc[0] * 10 if nom_col and not df[nom_col].dropna().empty else 125
 
-# Agrupar cilindros en ensayos: promediar resistencia por Cilindro N° a cada edad
-# Cada Cilindro N° único = 1 ensayo; se repite hasta 3 veces (14d, 28d, 56d)
-df28_ensayos = (
-    df[df["Edad Estandar"] == 28].groupby(cil_col)[res_col].mean().dropna()
-    if res_col and cil_col else pd.Series()
+# Paso 1: Promediar réplicas por muestra (C.5.6.2.4)
+df28_cil = (
+    df[df["Edad Estandar"] == 28]
+    .groupby(cil_col)[res_col]
+    .mean()
+    if (res_col and cil_col and not df[df["Edad Estandar"] == 28].empty)
+    else pd.Series()
 )
+n      = len(df28_cil)           # n° de ensayos = n° de muestras únicas a 28d
+prom28 = df28_cil.mean() if n > 0 else 0
 
-prom28     = df28_ensayos.mean() if not df28_ensayos.empty else 0
-ds         = df28_ensayos.std(ddof=1) if len(df28_ensayos) > 1 else 0
+# Conteos por edad para la tarjeta
+n14 = df[df["Edad Estandar"] == 14].groupby(cil_col)[res_col].mean().count() if cil_col else 0
+n56 = df[df["Edad Estandar"] == 56].groupby(cil_col)[res_col].mean().count() if cil_col else 0
 
-# N ensayos = cilindros únicos con dato a 28 días
-n_ensayos     = len(df28_ensayos)
-n_cilindros   = len(df[df["Edad Estandar"] == 28][res_col].dropna()) if res_col else 0
+# Paso 2: Desviación estándar sobre promedios + factor corrección Tabla C.5.3.1.2
+ds_raw = df28_cil.std(ddof=1) if n > 1 else 0
 
-cv     = ds / prom28 if prom28 else 0
-fcr1   = fc_nominal + 1.34 * ds
-fcr2   = fc_nominal + 2.33 * ds - 35
-fcr    = max(fcr1, fcr2) if fc_nominal <= 350 else max(fcr1, 0.9 * fc_nominal + 2.33 * ds)
-cumple_global = prom28 >= fcr
+if n >= 30:
+    factor_corr = 1.00
+elif n >= 25:
+    factor_corr = round(1.03 + 0.006 * (25 - n), 4)
+elif n >= 20:
+    factor_corr = round(1.08 + 0.010 * (20 - n), 4)
+elif n >= 15:
+    factor_corr = round(1.16 + 0.016 * (15 - n), 4)
+else:
+    factor_corr = None  # n < 15: usar Tabla C.5.3.2.2
+
+ds = ds_raw * factor_corr if factor_corr is not None else ds_raw
+
+# Paso 3: f'cr según n disponible
+if factor_corr is not None:
+    # Tabla C.5.3.2.1 — hay Ds confiable (n >= 15)
+    fcr1 = fc_nominal + 1.34 * ds
+    fcr2 = fc_nominal + 2.33 * ds - 35
+    fcr3 = 0.9 * fc_nominal + 2.33 * ds
+    fcr  = max(fcr1, fcr2) if fc_nominal <= 350 else max(fcr1, fcr3)
+else:
+    # Tabla C.5.3.2.2 — n < 15, sin Ds confiable
+    if fc_mpa < 21:
+        fcr = fc_nominal + 70
+    elif fc_mpa <= 35:
+        fcr = fc_nominal + 83
+    else:
+        fcr = 1.10 * fc_nominal + 50
+
+# Paso 4: Umbral individual C.5.6.3.3(b) y cumplimiento global
 umbral_nsr    = fc_nominal - 35 if fc_nominal <= 350 else fc_nominal * 0.9
+cumple_global = prom28 >= fcr
+cv            = ds / prom28 if prom28 else 0
 cal_cv, cls_cv = calidad_cv(cv)
 cal_ds, cls_ds = calidad_ds(ds)
 
@@ -329,7 +402,7 @@ else:
     nsr_reason = f"x={prom28:.1f} < f'cr={fcr:.1f} (faltan {fcr-prom28:.1f})"
 
 # ─── TARJETAS KPI ────────────────────────────────────────────────────────────
-st.markdown(f"### {proyecto_sel} &nbsp;·&nbsp; {tipo_sel}", unsafe_allow_html=True)
+st.markdown(f"### {proyecto_sel} &nbsp;·&nbsp; {tipo_sel} &nbsp;·&nbsp; f'c = {fc_nominal:.0f} kg/cm²", unsafe_allow_html=True)
 
 def card(col, label, value, sub="", cls="", reason=""):
     reason_html = f"<div class='metric-reason'>{reason}</div>" if reason else ""
@@ -346,7 +419,8 @@ card(c1, "f'c Nominal",     f"{fc_nominal:.0f}",  "kg/cm2")
 card(c2, "Promedio 28d",    f"{prom28:.1f}",       "kg/cm2")
 card(c3, "Desv. Estandar",  f"{ds:.1f}",           cal_ds, cls_ds)
 card(c4, "Coef. Variacion", f"{cv*100:.1f}%",      cal_cv, cls_cv)
-card(c5, "N Ensayos",       str(n_ensayos),        f"{n_cilindros} cilindros")
+card(c5, "N Muestras", str(n),
+    sub=f"N14={n14}  N28={n}  N56={n56}")
 card(c6, "f'cr Diseno",     f"{fcr:.1f}",          "kg/cm2")
 card(c7, "NSR-10 Global",
     "Cumple" if cumple_global else "No Cumple",
@@ -359,10 +433,9 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ─── GRÁFICA 1: CONTROL DE RESISTENCIA ──────────────────────────────────────
 st.markdown('<div class="section-title">Control de Resistencia</div>', unsafe_allow_html=True)
 
-# FIX 2: Usar índice posicional categórico para evitar espacios en saltos grandes
 todos_cilindros = sorted(df[cil_col].dropna().unique())
-etiquetas_x     = [str(int(c)) for c in todos_cilindros]   # etiquetas para mostrar
-indices_x       = list(range(len(todos_cilindros)))          # posiciones 0,1,2,3...
+etiquetas_x     = [str(int(c)) for c in todos_cilindros]
+indices_x       = list(range(len(todos_cilindros)))
 cil_to_idx      = {c: i for i, c in enumerate(todos_cilindros)}
 
 fig1 = go.Figure()
@@ -381,7 +454,6 @@ for edad in [14, 28, 56]:
         idx = cil_to_idx[cil]
         val = prom_cil.get(cil)
         if pd.isna(val):
-            # Insertar None para romper la línea sin espacios en eje X
             y_vals.append(None)
             x_pos.append(idx)
             hover_texts.append(f"<b>Cilindro {int(cil)}</b><br>{edad}d: Sin dato")
@@ -395,7 +467,6 @@ for edad in [14, 28, 56]:
                 f"% f'c: {val/fc_nominal*100:.1f}%"
             )
 
-    # FIX 2: line_shape="spline" con smoothing=0.5 para interpolacion suave cardinal
     fig1.add_trace(go.Scatter(
         x=x_pos,
         y=y_vals,
@@ -410,7 +481,6 @@ for edad in [14, 28, 56]:
 
 prom_general = df[df["Edad Estandar"] == 28].groupby(cil_col)[res_col].mean().mean()
 
-# Líneas de referencia: la de mayor valor lleva etiqueta top, la menor bottom
 _fc_pos   = "right top"    if fc_nominal  >= prom_general else "right bottom"
 _prom_pos = "right bottom" if fc_nominal  >= prom_general else "right top"
 
@@ -427,7 +497,6 @@ fig1.add_hline(
     annotation_position=_prom_pos,
 )
 
-# Intervalos inteligentes: mostrar ticks cada N segun cantidad
 n_cil = len(todos_cilindros)
 if n_cil <= 40:    step = 1
 elif n_cil <= 80:  step = 2
@@ -456,9 +525,9 @@ col_a, col_b = st.columns(2)
 
 with col_a:
     st.markdown('<div class="section-title">Distribucion Normal</div>', unsafe_allow_html=True)
-    mu = df28_ensayos.mean() if not df28_ensayos.empty else 0
+    mu = df28_cil.mean() if not df28_cil.empty else 0
     x_rel = np.linspace(-250, 250, 500)
-    freq_counts, freq_bins = np.histogram(df28_ensayos - mu, bins=np.arange(-250, 260, 10))
+    freq_counts, freq_bins = np.histogram(df28_cil - mu, bins=np.arange(-250, 260, 10))
     bin_centers = (freq_bins[:-1] + freq_bins[1:]) / 2
 
     fig2 = make_subplots(specs=[[{"secondary_y": True}]])
@@ -502,9 +571,11 @@ with col_b:
 
     promedios_edad = []
     for edad in [14, 28, 56]:
-        vals = df[df["Edad Estandar"] == edad].groupby(cil_col)[res_col].mean().dropna() if res_col and cil_col else pd.Series()
-        if not vals.empty:
-            promedios_edad.append({"Edad": edad, "Promedio": vals.mean()})
+        df_edad = df[df["Edad Estandar"] == edad] if res_col else pd.DataFrame()
+        if not df_edad.empty:
+            prom_cil_edad = df_edad.groupby(cil_col)[res_col].mean()
+            if not prom_cil_edad.empty:
+                promedios_edad.append({"Edad": edad, "Promedio": prom_cil_edad.mean()})
     df_evol = pd.DataFrame(promedios_edad)
 
     fig3 = go.Figure()
@@ -527,14 +598,11 @@ with col_b:
                 line=dict(color="rgba(0,0,0,0)"),
                 name="Rango +-", hoverinfo="skip",
             ))
-            eq_label = f"f(t) = {popt[0]:.2f}·ln(t) + {popt[1]:.2f}"
             fig3.add_trace(go.Scatter(
                 x=x_curve, y=y_curve, mode="lines", name="Regresion log",
                 line=dict(color=HLINE_C, width=2, dash="dash"),
                 hovertemplate="t=%{x:.0f}d<br>f(t)=%{y:.1f} kg/cm2<extra></extra>",
             ))
-            # Ecuacion en esquina inferior derecha, sin recuadro, color de la linea
-            # Plotly no soporta LaTeX nativo en anotaciones — usamos unicode para estetica
             eq_display = (
                 f"<i>f</i>(t) = {popt[0]:.2f} · ln(t)"
                 f" {'+ ' if popt[1] >= 0 else '− '}{abs(popt[1]):.2f}"
@@ -595,7 +663,6 @@ for cil in sorted(df[cil_col].dropna().unique()):
         row["% f'c"] = f"{prom28_cil / fc_nominal * 100:.1f}%" if prom28_cil else None
         if prom28_cil:
             cumple_cil = prom28_cil > umbral_nsr
-            # FIX 4: Iconos de cumplimiento restaurados
             row["NSR-10"] = "✅ Cumple" if cumple_cil else "❌ No Cumple"
             if not cumple_cil:
                 n_no_cumple += 1
